@@ -1,0 +1,85 @@
+# llmtrim-stats-plugin — combined document
+
+Live llmtrim savings dashboard inside the DeepSeek Harness (DSH) Web UI: a settings dashboard plus a rotating carousel stats strip under the composer.
+
+- Repository: https://github.com/Zenjibad/llmtrim-stats-plugin (public, MIT, topic `dsh-plugin`)
+- Human docs: [README.md](README.md) (English) · [README.zh.md](README.zh.md) (中文)
+- Agent guide: [AGENTS.md](AGENTS.md)
+- Source: [src/index.ts](src/index.ts) (host) · [src/client/index.tsx](src/client/index.tsx) (client)
+
+## What it does
+
+Two UI seats backed by one 5s poller, showing llmtrim's live savings from the same `llmtrim status --json` command the CLI uses:
+
+- **Settings → llmtrim Stats** (`settings.section`, id `llmtrim-stats`): KPI cards (saved on proxy bills, tokens trimmed, requests, net saved re-priced at list rates), daemon health badge + version, per-model table (model / requests / saved % / USD).
+- **Composer carousel** (`conversation.composer.dock`, id `llmtrim-carousel`): a rotating strip cycling every 4s through `Saved today → Saved total → Tokens trimmed → Requests → Input saved → Round-trip`; renders nothing when data is missing.
+
+## How it works
+
+1. Host half resolves the `llmtrim` executable via the `subprocess` service (`resolveExecutable('llmtrim')`, PATHEXT finds the exe; fallback `LLMTRIM_BIN`, then the npm win32-x64 path).
+2. Each `/llmtrim-stats/api` request spawns `llmtrim status --json` (stdout capped 512 KB, 15s grace) and reshapes the result into a clean snapshot: `daemon`, `totals` (requests, tokens trimmed, input/output before-after + saved %, cache read, added latency), `money` (saved / saved today / paid / would-have / turns), `cost` (saved / spend / net saved / round-trip %), `byModel`, `meta.fetchedAt`.
+3. Client bundle: one shared 5s `setInterval` poller → `fetch('/llmtrim-stats/api')` → fan-out to the dashboard and the carousel (a `setInterval` advancing an index over the slide list).
+4. Failures return `{ok:false,error}` JSON; the UI shows an unavailable state with a Retry button and self-recovers on the next poll.
+
+## Install (packaged, persists across restarts)
+
+- `dsh plugin --profile web add ./llmtrim-stats-plugin` (local dir) or `dsh plugin --profile web add github:Zenjibad/llmtrim-stats-plugin` (or `git+https://github.com/Zenjibad/llmtrim-stats-plugin.git`); then restart DSH **and hard-refresh the browser tab** (`Ctrl+F5`).
+- The package declares `dsh.bundle` (`cordis.patch.yml` inserts the host row) and `dsh.client` (`exports["./client"]` = the browser bundle, scanned by client-modules at boot). No cordis_define, no per-session re-install.
+- **Hard refresh is required after install/update**: the DSH client HMR only hot-swaps already-loaded bundles and does not pull new bundles into an open tab.
+- Remove: `dsh plugin --profile web rm llmtrim-stats-plugin` + restart DSH.
+
+## Configuration
+
+No config file, no persisted settings. Fixed constants in source:
+
+| Knob | Location | Default |
+| --- | --- | --- |
+| HTTP route | `src/index.ts` | `GET /llmtrim-stats/api` |
+| Executable resolution | `resolveLlmtrim` in `src/index.ts` | `subprocess.resolveExecutable('llmtrim')` → `LLMTRIM_BIN` → npm win32-x64 path |
+| Poll interval | `POLL_MS` in `src/client/index.tsx` | 5 s |
+| Carousel cadence | `CAROUSEL_MS` in `src/client/index.tsx` | 4 s |
+| Settings seat | `src/client/index.tsx` | `settings.section` id `llmtrim-stats`, order 80 |
+| Dock seat | `src/client/index.tsx` | `conversation.composer.dock` id `llmtrim-carousel`, order 15 |
+
+## Key behaviors
+
+- Host is a real Node module (`Date` works); external commands go through the `subprocess` service, never `node:child_process` directly.
+- Pure pull from the CLI — no ledger parsing, no file watching, no events.
+- Read-only: never writes to llmtrim's directory or ledger; no credentials read.
+- The host route never throws non-JSON; every failure is `{ok:false,error}` JSON.
+- Themed with `--dsw-alias-*` tokens only; no hardcoded colors.
+
+## Probed environment facts
+
+- Packaged host plugins are real Node modules: `process.env`, `Date` available; the dynamic-plugin sandbox limits do NOT apply.
+- `subprocess.resolveExecutable('llmtrim')` resolves via PATH + PATHEXT (`.COM;.EXE;.BAT;.CMD`), finding the `llmtrim.exe` on PATH (e.g. `%LOCALAPPDATA%\llmtrim\bin` or the npm win32-x64 bin).
+- `llmtrim status --json` top-level keys: `daemon, reroute, last_request_ts, requests, input, output, cost, money, added_latency_ms, cache_read_tokens, approximate, by_model, by_period`. `money.source = 'breakdown_turns'`, `cost.source = 'compressions_live_prices'`.
+- `webServer.register` route shape: `{kind:'exact'|'prefix', path, handler(req,res)}` (node:http semantics); duplicate (kind, path) throws; register inside `ctx.effect` and return the disposer.
+- The client bundle is plain browser JS (ModuleLoader CJS factory): `fetch`, `setInterval`, `document` available; React from the module table (`external: react`).
+- The client must export `inject = ['slots']` (service key); the package.json `dsh.client.inject` lists package names (informational edges).
+- `settings.section` and `conversation.composer.dock` are list slots; fresh ids add seats beside the shipped ones (never reuse shipped ids).
+
+## Testing
+
+- Pre-restart: profile `package.json` `dependencies` + `dsh.profile.bundles` both list `llmtrim-stats-plugin`; `lib/client.js` has the ModuleLoader wrapper; `lib/index.js` exports `name` + `apply`.
+- Post-restart (after hard refresh): Settings → llmtrim Stats shows the dashboard; composer dock shows the rotating carousel; `GET /llmtrim-stats/api` returns the JSON snapshot with real numbers.
+- Failure paths: `llmtrim` missing from PATH → unavailable state + Retry; daemon stopped → zeros + "daemon stopped" badge; route unreachable → carousel hides, dashboard shows unavailable.
+- No automated test framework; the manual matrix above is the verification contract.
+
+## Build
+
+`pnpm install && pnpm build` → `lib/index.js` (host, node ESM) + `lib/client.js` (client, CJS ModuleLoader closure, bundle id = package name). See `tsdown.config.ts`.
+
+## Repository layout
+
+- `src/index.ts` — host half
+- `src/client/index.tsx` — client bundle
+- `cordis.patch.yml` — `dsh.bundle` patch
+- `tsdown.config.ts` — build config
+- `package.json` — `exports["./client"]`, `dsh.client`, `dsh.bundle`
+- `AGENTS.md` — agent guide
+- `README.md`, `README.zh.md` — bilingual docs
+
+## License
+
+MIT
