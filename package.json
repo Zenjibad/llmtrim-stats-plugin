@@ -1,6 +1,6 @@
 {
   "name": "llmtrim-stats-plugin",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Live llmtrim savings dashboard inside the DeepSeek Harness (DSH) Web UI: a settings dashboard plus a rotating carousel stats strip under the composer.",
   "license": "MIT",
   "type": "module",

@@ -10,7 +10,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Host half: `subprocess.resolveExecutable('llmtrim')` (fallback `LLMTRIM_BIN` → npm win32-x64 path), `spawn llmtrim status --json`, reshape `daemon/totals/money/cost/byModel` + `computeSavedWeekUsd` (ISO-week token share × lifetime saved), `llmtrim-stats` settings namespace (`{mode, staticStats}`, schemastery schema), `webServer` routes `GET /llmtrim-stats/api` + `PUT /llmtrim-stats/config`. |
+| `src/index.ts` | Host half: `subprocess.resolveExecutable('llmtrim')` (fallback `LLMTRIM_BIN` → npm win32-x64 path), `spawn llmtrim status --json`, reshape `daemon/totals/money/cost/byModel` + `computeSavedWeekUsd` (this-week token share × lifetime saved, from daily `by_period` keys), `llmtrim-stats` settings namespace (`{mode, staticStats}`, schemastery schema), `webServer` routes `GET /llmtrim-stats/api` + `PUT /llmtrim-stats/config`. |
 | `src/client/index.tsx` | Client bundle: single 5s poller `fetch('/llmtrim-stats/api')`, settings dashboard (`settings.section` id `llmtrim-stats`) incl. four money cards + carousel config (Rotating/Static radios + 9 stat checkboxes), configurable dock carousel (`conversation.composer.dock` id `llmtrim-carousel`, 4s cycle), `<style data-plugin>` with `--dsw-alias-*` tokens. |
 | `cordis.patch.yml` | `dsh.bundle.patch`: inserts the plugin row `{id: llmtrim-stats-plugin, name: 'llmtrim-stats-plugin'}`. |
 | `tsdown.config.ts` | Builds host (node ESM → `lib/index.js`) + client (browser CJS ModuleLoader closure → `lib/client.js`, bundle id = package name). |
@@ -52,7 +52,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 ## Testing
 
 - **Before restart**: verify the profile installed the bundle — `~/.dsh/profiles/web/package.json` `dependencies` and `dsh.profile.bundles` both list `llmtrim-stats-plugin`; `lib/client.js` has the ModuleLoader wrapper; `lib/index.js` exports `name` + `apply`.
-- **After restart (hard-refresh the tab)**: Settings → llmtrim Stats shows the dashboard (four money cards + carousel config); composer dock shows the carousel in the configured mode (Rotating cycles selected stats, Static pins to ticked stats); toggling the config persists across restarts; `GET /llmtrim-stats/api` returns the JSON snapshot with real numbers.
+- **After restart (hard-refresh the tab)**: Settings → llmtrim Stats shows the dashboard (four money cards + carousel config); composer dock shows the carousel in the configured mode (Rotating cycles one selected stat, Static shows every selected stat at once); toggling the config persists across restarts; `GET /llmtrim-stats/api` returns the JSON snapshot with real numbers.
 - Failure path: temporarily remove `llmtrim` from PATH (or set `LLMTRIM_BIN` to a bad path) → dashboard shows unavailable + Retry, carousel hides; restore → recovers ≤5s.
 - No automated test framework; the manual matrix above is the verification contract.
 

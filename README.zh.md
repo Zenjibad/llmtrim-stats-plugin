@@ -28,8 +28,8 @@
 | 特性 | 说明 |
 | --- | --- |
 | 📊 **设置页仪表盘** | 设置 → llmtrim Stats：KPI 卡片（**已支付 / 未压缩应付 / 今日节省 / 本周节省** + token 削减、请求数、按现价重估净节省）、守护进程健康徽章 + 版本号、按模型表格（模型 / 请求数 / 节省 % / USD） |
-| 🎠 **可配置轮播条** | 聊天输入框下方统计条：选择 **轮播**（每 4 秒切换）或 **静态**（只显示勾选的统计）——自由挑选展示哪些统计，每 5 秒刷新 |
-| 💵 **四张金额卡片** | 已支付（`money.paid_usd`）、未压缩应付（`money.would_have_usd`）、今日节省（`money.saved_today_usd`）、本周节省（按当前 ISO 周 token 占比 × 累计 `money.saved_usd` 折算——llmtrim 不提供周度美元额） |
+| 🎠 **可配置轮播条** | 聊天输入框下方统计条：选择 **轮播**（每次切换一个统计）或 **静态**（同时显示所有勾选统计、不轮转）——自由挑选展示哪些统计，每 5 秒刷新 |
+| 💵 **四张金额卡片** | 已支付（`money.paid_usd`）、未压缩应付（`money.would_have_usd`）、今日节省（`money.saved_today_usd`）、本周节省（按本周（周一起）token 占比 × 累计 `money.saved_usd` 折算——llmtrim 不提供周度美元额） |
 | 🔗 **与官方 CLI 一致** | Host 通过 `subprocess` 服务运行 `llmtrim status --json`（与 `llmtrim status` 相同命令）——不解析账本文件，始终与 CLI 一致 |
 | 🩺 **守护进程健康一目了然** | 仪表盘显示绿/黄徽章（守护进程健康 / 已停止）与二进制版本号 |
 | 🌗 **主题自适应** | 全部颜色使用 `--dsw-alias-*` 设计令牌，亮/暗色自动跟随 |
@@ -94,7 +94,7 @@ dsh plugin --profile web add git+https://github.com/Zenjibad/llmtrim-stats-plugi
 
 | 设置项 | 取值 | 效果 |
 | --- | --- | --- |
-| **模式** | `rotating`（默认）/ `static` | 轮播：每 4 秒循环切换所选统计；静态：固定显示单个统计（勾选多个则只在这些之间循环） |
+| **模式** | `rotating`（默认）/ `static` | 轮播：每 4 秒在所选统计中切换一个；静态：**同时显示所有勾选统计**、固定不轮转 |
 | **统计项** | 9 个复选框（默认全选） | 轮播条显示哪些统计：今日节省、累计节省、已支付、未压缩应付、本周节省、token 削减、请求数、输入节省、往返节省 |
 
 固定常量见源码：
@@ -123,10 +123,10 @@ A: 守护进程未运行（`llmtrim start`），或账本为空。启动守护�
 A: 两者都直接来自 `llmtrim status --json`——`money.saved_usd`（按每次对话冻结费率）与 `cost.net_saved_usd`（按当前列表价重估）。它们是同一批流量的不同视角；llmtrim 官方 CLI 也展示同样的区别。
 
 **Q: 「本周节省」如何计算？**
-A: llmtrim 只按生命周期（`money.saved_usd`）与今日（`money.saved_today_usd`）报告金额；其 `by_period` 行只带 token 不带 USD。因此插件按比例折算：当前 ISO 周输入 token ÷ 累计输入 token × 累计节省。与你在 `llmtrim status` 中看到的周度数字一致，随账本增长而更新。
+A: llmtrim 只按生命周期（`money.saved_usd`）与今日（`money.saved_today_usd`）报告金额；其 `by_period` 行只带 token 不带 USD（默认为 `2026-08-19` 形式的按日键）。因此插件按比例折算：本周（周一起）输入 token ÷ 累计输入 token × 累计节省。随账本增长而更新。
 
 **Q: 能不能让轮播条只显示一个统计、或停止轮播？**
-A: 可以——设置 → llmtrim Stats → Carousel：把模式设为 **Static** 并只勾选一个统计即可固定显示；勾选多个则只在这些之间循环。轮播模式会循环所有勾选项。选择会持久化并跨重启保留。
+A: 可以——设置 → llmtrim Stats → Carousel：把模式设为 **Static** 并勾选你想要的统计，静态模式会**同时显示所有勾选统计**（固定不轮转），只勾选一个即固定显示单条。轮播模式则每次切换一个勾选统计。每次修改后会出现绿色「Saved ✓」提示；选择会持久化并跨重启保留。
 
 **Q: 如何彻底移除？**
 A: `dsh plugin --profile web rm llmtrim-stats-plugin`（或删除 profile 依赖与 bundle 条目）后重启 DSH。

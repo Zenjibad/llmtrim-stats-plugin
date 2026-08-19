@@ -174,31 +174,30 @@ async function fetchLlmtrimStatus(sub: SubprocessLike, exe: string): Promise<any
   return JSON.parse(out)
 }
 
-/** ISO week number (Monday-start) of a Date, matching llmtrim's `2026-W33` period keys. */
-function isoWeekOf(d: Date): string {
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  const day = (t.getUTCDay() + 6) % 7 // Mon=0
-  t.setUTCDate(t.getUTCDate() - day + 3)
-  const firstThursday = new Date(Date.UTC(t.getUTCFullYear(), 0, 4))
-  const firstDay = (firstThursday.getUTCDay() + 6) % 7
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3)
-  const week = 1 + Math.round((t.getTime() - firstThursday.getTime()) / (7 * 86400000))
-  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
-}
-
 /**
  * llmtrim's `by_period` rows carry tokens but no money; `money` is always
- * lifetime. "Saved this week" is therefore prorated: the current-ISO-week
- * token share × lifetime saved. Mirrors llmtrim's own period math.
+ * lifetime. "Saved this week" is therefore prorated: the current-week token
+ * share × lifetime saved.
+ *
+ * Period keys are LOCAL dates (`2026-08-19`) by default (the `--daily` /
+ * `--weekly` flags only re-bucket `by_period`; the plugin never passes them),
+ * so we sum the keys falling inside the current Monday-start week.
  */
 function computeSavedWeekUsd(raw: any): number {
   const periods = Array.isArray(raw?.by_period) ? raw.by_period : []
   const totalInput = num0(raw?.input?.before)
   if (totalInput <= 0 || periods.length === 0) return 0
-  const currentWeek = isoWeekOf(new Date())
-  const weekInput = periods
-    .filter((p: any) => String(p?.period ?? '').startsWith(currentWeek))
-    .reduce((sum: number, p: any) => sum + num0(p?.input_before), 0)
+  const now = new Date()
+  const day = (now.getDay() + 6) % 7 // 0 = Monday
+  const monday = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - day))
+  const nextMonday = new Date(monday.getTime() + 7 * 86400000)
+  const weekInput = periods.reduce((sum: number, p: any) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(p?.period ?? ''))
+    if (!m) return sum
+    const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+    if (t >= monday.getTime() && t < nextMonday.getTime()) return sum + num0(p?.input_before)
+    return sum
+  }, 0)
   if (weekInput <= 0) return 0
   return (weekInput / totalInput) * num0(raw?.money?.saved_usd)
 }

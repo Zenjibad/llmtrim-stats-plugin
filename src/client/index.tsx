@@ -139,7 +139,12 @@ export function apply(ctx: Context): void {
     '.lts-config-row input[type="radio"],.lts-config-row input[type="checkbox"]{accent-color:var(--dsw-alias-brand-primary)}',
     '.lts-config-stats{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px}',
     '.lts-config-stats label{display:flex;align-items:center;gap:6px;cursor:pointer}',
+    '.lts-saved{color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px;margin-left:auto}',
+    '.lts-save-err{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;margin-left:auto}',
+    '.lts-config-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}',
     '.lts-dock{display:flex;align-items:center;gap:8px;min-width:0}',
+    '.lts-dock-static{display:flex;align-items:center;gap:12px;overflow:hidden}',
+    '.lts-dock-static-item{display:flex;align-items:center;gap:6px;white-space:nowrap}',
     '.lts-dock-key{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
     '.lts-dock-value{font-size:12px;line-height:20px;color:var(--dsw-alias-label-primary);white-space:nowrap;font-variant-numeric:tabular-nums}',
     '.lts-dock-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}',
@@ -189,6 +194,13 @@ export function apply(ctx: Context): void {
   function Dashboard(): React.ReactElement {
     const { data, failed, reload } = useSnapshot()
     const h = React.createElement
+    const [savedAt, setSavedAt] = React.useState(0)
+    const [saveErr, setSaveErr] = React.useState<string | null>(null)
+    React.useEffect(() => {
+      if (savedAt === 0) return
+      const t = setTimeout(() => setSavedAt(0), 2500)
+      return () => clearTimeout(t)
+    }, [savedAt])
     if (failed && (data === null || !data.ok)) {
       return h('div', { className: 'lts-section' },
         h('div', { className: 'lts-failure' },
@@ -224,7 +236,9 @@ export function apply(ctx: Context): void {
 
     const onMode = (mode: Config['mode']) => {
       const next: Config = { mode, staticStats: cfg.staticStats.length > 0 ? cfg.staticStats : [...STAT_KEYS] }
-      void saveConfig(next).then(reload).catch(() => undefined)
+      void saveConfig(next)
+        .then(() => { setSavedAt(Date.now()); setSaveErr(null); reload() })
+        .catch(() => setSaveErr('could not save'))
     }
     const onToggleStat = (key: StatKey) => {
       const has = cfg.staticStats.includes(key)
@@ -232,7 +246,9 @@ export function apply(ctx: Context): void {
         mode: cfg.mode,
         staticStats: has ? cfg.staticStats.filter((s) => s !== key) : [...cfg.staticStats, key],
       }
-      void saveConfig(next).then(reload).catch(() => undefined)
+      void saveConfig(next)
+        .then(() => { setSavedAt(Date.now()); setSaveErr(null); reload() })
+        .catch(() => setSaveErr('could not save'))
     }
 
     return h('div', { className: 'lts-section' },
@@ -267,12 +283,20 @@ export function apply(ctx: Context): void {
           h('div', { className: 'lts-card-value' }, fmtUsd(d?.cost?.netSavedUsd)),
           h('div', { className: 'lts-card-sub' }, fmtPct(d?.cost?.roundTripPct) + ' round-trip')),
       ),
-      h('div', { className: 'lts-heading' }, h('h3', null, 'Carousel')),
+      h('div', { className: 'lts-heading' },
+        h('h3', null, 'Carousel'),
+        saveErr ? h('span', { className: 'lts-save-err' }, saveErr) : null,
+        savedAt > 0 ? h('span', { className: 'lts-saved' }, 'Saved ✓') : null,
+      ),
       h('div', { className: 'lts-config' },
         h('div', { className: 'lts-config-row' },
           h('label', null, h('input', { type: 'radio', name: 'lts-mode', checked: cfg.mode === 'rotating', onChange: () => onMode('rotating') }), 'Rotating'),
           h('label', null, h('input', { type: 'radio', name: 'lts-mode', checked: cfg.mode === 'static', onChange: () => onMode('static') }), 'Static'),
         ),
+        h('div', { className: 'lts-config-hint' },
+          cfg.mode === 'rotating'
+            ? 'Rotating cycles one stat at a time through the selected stats.'
+            : 'Static shows every selected stat at once, without rotating.'),
         h('div', { className: 'lts-config-stats' },
           STAT_KEYS.map((key) =>
             h('label', { key },
@@ -317,12 +341,29 @@ export function apply(ctx: Context): void {
 
     const all = buildSlides(d)
     const cfg: Config = d.config ?? { mode: 'rotating', staticStats: [...STAT_KEYS] }
-    // In static mode only the selected stats show; in rotating mode cycle all.
-    const pool =
-      cfg.mode === 'static' && cfg.staticStats.length > 0
-        ? all.filter((s) => cfg.staticStats.includes(s.key))
-        : all
+    // Both modes only use the ticked stats (fall back to all if none ticked).
+    const selected = all.filter((s) => cfg.staticStats.includes(s.key))
+    const pool = selected.length > 0 ? selected : all
     if (pool.length === 0) return null
+
+    // Static mode: show every selected stat at once, fixed (no rotation).
+    if (cfg.mode === 'static') {
+      return React.createElement(
+        'div',
+        { className: 'lts-dock lts-dock-static' },
+        pool.map((s) =>
+          React.createElement(
+            'span',
+            { className: 'lts-dock-static-item', key: s.key },
+            React.createElement('span', { className: 'lts-dock-dot', 'data-ok': String(d.daemon?.running ?? false) }),
+            React.createElement('span', { className: 'lts-dock-key' }, s.label),
+            React.createElement('span', { className: 'lts-dock-value' }, s.value),
+          ),
+        ),
+      )
+    }
+
+    // Rotating mode: cycle one stat at a time.
     const slide = pool[idx % pool.length] ?? pool[0]
     if (slide === undefined) return null
 

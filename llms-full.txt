@@ -12,7 +12,7 @@ Live llmtrim savings dashboard inside the DeepSeek Harness (DSH) Web UI: a setti
 Two UI seats backed by one 5s poller, showing llmtrim's live savings from the same `llmtrim status --json` command the CLI uses:
 
 - **Settings → llmtrim Stats** (`settings.section`, id `llmtrim-stats`): KPI cards — **You paid, Would have cost, Saved today, Saved this week** plus tokens trimmed, requests, net saved re-priced at list rates — daemon health badge + version, per-model table (model / requests / saved % / USD), and the **carousel configuration** (mode + stat checkboxes).
-- **Composer carousel** (`conversation.composer.dock`, id `llmtrim-carousel`): a configurable strip — **Rotating** cycles the selected stats every 4s (`Saved today → Saved total → You paid → Would have cost → Saved this week → Tokens trimmed → Requests → Input saved → Round-trip`); **Static** pins to the ticked stats (single tick = fixed line, several ticks = cycle just those); renders nothing when data is missing.
+- **Composer carousel** (`conversation.composer.dock`, id `llmtrim-carousel`): a configurable strip — **Rotating** cycles one selected stat every 4s (`Saved today → Saved total → You paid → Would have cost → Saved this week → Tokens trimmed → Requests → Input saved → Round-trip`); **Static** shows every selected stat at once, fixed (no rotation); renders nothing when data is missing.
 
 ## How it works
 
@@ -34,10 +34,10 @@ Carousel behaviour is configurable from the Settings page and persisted in the `
 
 | Setting | Values | Effect |
 | --- | --- | --- |
-| Mode | `rotating` (default) / `static` | Rotating cycles the selected stats every 4 s; Static pins the carousel (one tick = fixed line, several ticks = cycle just those) |
+| Mode | `rotating` (default) / `static` | Rotating cycles one selected stat every 4 s; Static shows every selected stat at once, fixed (no rotation) |
 | Stats | 9 checkboxes (all on) | Which stats appear: Saved today, Saved total, You paid, Would have cost, Saved this week, Tokens trimmed, Requests, Input saved, Round-trip |
 
-**Saved this week** = current ISO-week input tokens ÷ lifetime input tokens × lifetime `money.saved_usd` (llmtrim's `by_period` rows carry tokens but no USD, so the weekly figure is prorated).
+**Saved this week** = this-week (Monday-start) input tokens ÷ lifetime input tokens × lifetime `money.saved_usd` (llmtrim's `by_period` rows carry tokens but no USD — daily `2026-08-19` keys by default — so the weekly figure is prorated from the daily keys).
 
 Fixed constants in source:
 

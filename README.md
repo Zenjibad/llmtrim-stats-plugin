@@ -28,8 +28,8 @@
 | Feature | Description |
 | --- | --- |
 | 📊 **Settings dashboard** | Settings → llmtrim Stats: KPI cards (**You paid / Would have cost / Saved today / Saved this week** + tokens trimmed, requests, net saved re-priced), daemon health badge + version, per-model table (model / requests / saved % / USD) |
-| 🎠 **Configurable carousel** | Composer strip under the chat input: choose **Rotating** (cycle every 4s) or **Static** (show only the stats you tick) — pick exactly which stats appear; refreshed every 5s |
-| 💵 **Four money cards** | You paid (`money.paid_usd`), Would have cost (`money.would_have_usd`), Saved today (`money.saved_today_usd`), Saved this week (prorated: current ISO-week token share × lifetime `money.saved_usd` — llmtrim reports no weekly USD) |
+| 🎠 **Configurable carousel** | Composer strip under the chat input: choose **Rotating** (cycle one stat at a time) or **Static** (show every selected stat at once, fixed) — pick exactly which stats appear; refreshed every 5s |
+| 💵 **Four money cards** | You paid (`money.paid_usd`), Would have cost (`money.would_have_usd`), Saved today (`money.saved_today_usd`), Saved this week (prorated: current-week (Monday-start) token share × lifetime `money.saved_usd` — llmtrim reports no weekly USD) |
 | 🔗 **Lives off the real CLI** | The host runs `llmtrim status --json` (the same command as `llmtrim status`) via the `subprocess` service — no ledger-file parsing, always consistent with the CLI |
 | 🩺 **Daemon health at a glance** | The dashboard shows a green/amber badge (daemon healthy / stopped) plus the binary version |
 | 🌗 **Theme-aware** | All colors use `--dsw-alias-*` design tokens; follows light/dark automatically |
@@ -94,7 +94,7 @@ The carousel is configurable from the Settings page (persisted in the `llmtrim-s
 
 | Setting | Values | Effect |
 | --- | --- | --- |
-| **Mode** | `rotating` (default) / `static` | Rotating cycles the selected stats every 4 s; Static pins the carousel to a single stat (or cycles just the ticked ones if you pick several) |
+| **Mode** | `rotating` (default) / `static` | Rotating cycles one stat at a time through the selected stats every 4 s; Static shows **every selected stat at once**, fixed (no rotation) |
 | **Stats** | 9 checkboxes (all on by default) | Which stats appear in the carousel: Saved today, Saved total, You paid, Would have cost, Saved this week, Tokens trimmed, Requests, Input saved, Round-trip |
 
 Fixed constants in source:
@@ -123,10 +123,10 @@ A: The daemon isn't running (`llmtrim start`), or the ledger is empty. Start the
 A: Both come straight from `llmtrim status --json` — `money.saved_usd` (per-turn frozen rates) vs `cost.net_saved_usd` (re-priced at current list rates). They're different views of the same traffic; llmtrim's own CLI shows the same distinction.
 
 **Q: How is "Saved this week" computed?**
-A: llmtrim reports money only for the lifetime (`money.saved_usd`) and today (`money.saved_today_usd`); its `by_period` rows carry tokens but no USD. The plugin therefore prorates: current ISO-week input tokens ÷ lifetime input tokens × lifetime saved. It tracks the same weekly numbers you see in `llmtrim status` and updates as the ledger grows.
+A: llmtrim reports money only for the lifetime (`money.saved_usd`) and today (`money.saved_today_usd`); its `by_period` rows carry tokens but no USD (daily `2026-08-19` keys by default). The plugin therefore prorates: input tokens this week (Monday-start) ÷ lifetime input tokens × lifetime saved. It updates as the ledger grows.
 
 **Q: Can I make the carousel show only one stat, or stop it rotating?**
-A: Yes — Settings → llmtrim Stats → Carousel: set Mode to **Static** and tick exactly the stats you want. A single tick pins the carousel to that stat; several ticks cycle just those. Rotating mode cycles all ticked stats. The choice is persisted and survives restarts.
+A: Yes — Settings → llmtrim Stats → Carousel: set Mode to **Static** and tick exactly the stats you want. Static shows every selected stat at once (fixed, no rotation); a single tick pins it to that one stat. Rotating mode cycles one stat at a time through the ticked stats. A green "Saved ✓" appears after each change; the choice is persisted and survives restarts.
 
 **Q: How do I remove it?**
 A: `dsh plugin --profile web rm llmtrim-stats-plugin` (or delete the profile dependency + bundle entry) and restart DSH.
