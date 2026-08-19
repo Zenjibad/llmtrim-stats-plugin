@@ -11,14 +11,14 @@ Live llmtrim savings dashboard inside the DeepSeek Harness (DSH) Web UI: a setti
 
 Two UI seats backed by one 5s poller, showing llmtrim's live savings from the same `llmtrim status --json` command the CLI uses:
 
-- **Settings → llmtrim Stats** (`settings.section`, id `llmtrim-stats`): KPI cards (saved on proxy bills, tokens trimmed, requests, net saved re-priced at list rates), daemon health badge + version, per-model table (model / requests / saved % / USD).
-- **Composer carousel** (`conversation.composer.dock`, id `llmtrim-carousel`): a rotating strip cycling every 4s through `Saved today → Saved total → Tokens trimmed → Requests → Input saved → Round-trip`; renders nothing when data is missing.
+- **Settings → llmtrim Stats** (`settings.section`, id `llmtrim-stats`): KPI cards — **You paid, Would have cost, Saved today, Saved this week** plus tokens trimmed, requests, net saved re-priced at list rates — daemon health badge + version, per-model table (model / requests / saved % / USD), and the **carousel configuration** (mode + stat checkboxes).
+- **Composer carousel** (`conversation.composer.dock`, id `llmtrim-carousel`): a configurable strip — **Rotating** cycles the selected stats every 4s (`Saved today → Saved total → You paid → Would have cost → Saved this week → Tokens trimmed → Requests → Input saved → Round-trip`); **Static** pins to the ticked stats (single tick = fixed line, several ticks = cycle just those); renders nothing when data is missing.
 
 ## How it works
 
 1. Host half resolves the `llmtrim` executable via the `subprocess` service (`resolveExecutable('llmtrim')`, PATHEXT finds the exe; fallback `LLMTRIM_BIN`, then the npm win32-x64 path).
-2. Each `/llmtrim-stats/api` request spawns `llmtrim status --json` (stdout capped 512 KB, 15s grace) and reshapes the result into a clean snapshot: `daemon`, `totals` (requests, tokens trimmed, input/output before-after + saved %, cache read, added latency), `money` (saved / saved today / paid / would-have / turns), `cost` (saved / spend / net saved / round-trip %), `byModel`, `meta.fetchedAt`.
-3. Client bundle: one shared 5s `setInterval` poller → `fetch('/llmtrim-stats/api')` → fan-out to the dashboard and the carousel (a `setInterval` advancing an index over the slide list).
+2. Each `/llmtrim-stats/api` request spawns `llmtrim status --json` (stdout capped 512 KB, 15s grace) and reshapes the result into a clean snapshot: `daemon`, `totals` (requests, tokens trimmed, input/output before-after + saved %, cache read, added latency), `money` (saved / saved today / paid / would-have / saved-this-week (prorated) / turns), `cost` (saved / spend / net saved / round-trip %), `byModel`, `config` (`{mode, staticStats}` from the settings namespace), `meta.fetchedAt`.
+3. Client bundle: one shared 5s `setInterval` poller → `fetch('/llmtrim-stats/api')` → fan-out to the dashboard and the carousel (a `setInterval` advancing an index over the filtered slide list). Config changes are written with `PUT /llmtrim-stats/config` and persisted via the host's `settings` service.
 4. Failures return `{ok:false,error}` JSON; the UI shows an unavailable state with a Retry button and self-recovers on the next poll.
 
 ## Install (packaged, persists across restarts)
@@ -30,11 +30,20 @@ Two UI seats backed by one 5s poller, showing llmtrim's live savings from the sa
 
 ## Configuration
 
-No config file, no persisted settings. Fixed constants in source:
+Carousel behaviour is configurable from the Settings page and persisted in the `llmtrim-stats` settings namespace (via `PUT /llmtrim-stats/config`):
+
+| Setting | Values | Effect |
+| --- | --- | --- |
+| Mode | `rotating` (default) / `static` | Rotating cycles the selected stats every 4 s; Static pins the carousel (one tick = fixed line, several ticks = cycle just those) |
+| Stats | 9 checkboxes (all on) | Which stats appear: Saved today, Saved total, You paid, Would have cost, Saved this week, Tokens trimmed, Requests, Input saved, Round-trip |
+
+**Saved this week** = current ISO-week input tokens ÷ lifetime input tokens × lifetime `money.saved_usd` (llmtrim's `by_period` rows carry tokens but no USD, so the weekly figure is prorated).
+
+Fixed constants in source:
 
 | Knob | Location | Default |
 | --- | --- | --- |
-| HTTP route | `src/index.ts` | `GET /llmtrim-stats/api` |
+| HTTP routes | `src/index.ts` | `GET /llmtrim-stats/api`, `PUT /llmtrim-stats/config` |
 | Executable resolution | `resolveLlmtrim` in `src/index.ts` | `subprocess.resolveExecutable('llmtrim')` → `LLMTRIM_BIN` → npm win32-x64 path |
 | Poll interval | `POLL_MS` in `src/client/index.tsx` | 5 s |
 | Carousel cadence | `CAROUSEL_MS` in `src/client/index.tsx` | 4 s |
@@ -62,7 +71,7 @@ No config file, no persisted settings. Fixed constants in source:
 ## Testing
 
 - Pre-restart: profile `package.json` `dependencies` + `dsh.profile.bundles` both list `llmtrim-stats-plugin`; `lib/client.js` has the ModuleLoader wrapper; `lib/index.js` exports `name` + `apply`.
-- Post-restart (after hard refresh): Settings → llmtrim Stats shows the dashboard; composer dock shows the rotating carousel; `GET /llmtrim-stats/api` returns the JSON snapshot with real numbers.
+- Post-restart (after hard refresh): Settings → llmtrim Stats shows the dashboard (incl. the four money cards + carousel config); composer dock shows the carousel in the configured mode; `GET /llmtrim-stats/api` returns the JSON snapshot with real numbers; toggling Rotating/Static + stat checkboxes persists across restarts.
 - Failure paths: `llmtrim` missing from PATH → unavailable state + Retry; daemon stopped → zeros + "daemon stopped" badge; route unreachable → carousel hides, dashboard shows unavailable.
 - No automated test framework; the manual matrix above is the verification contract.
 

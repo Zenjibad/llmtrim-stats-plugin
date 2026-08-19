@@ -27,8 +27,9 @@
 
 | Feature | Description |
 | --- | --- |
-| 📊 **Settings dashboard** | Settings → llmtrim Stats: KPI cards (saved on proxy bills, tokens trimmed, requests, net saved re-priced), daemon health badge + version, per-model table (model / requests / saved % / USD) |
-| 🎠 **Composer carousel** | One rotating strip under the chat input cycling every 4s: `Saved today → Saved total → Tokens trimmed → Requests → Input saved → Round-trip`, refreshed every 5s |
+| 📊 **Settings dashboard** | Settings → llmtrim Stats: KPI cards (**You paid / Would have cost / Saved today / Saved this week** + tokens trimmed, requests, net saved re-priced), daemon health badge + version, per-model table (model / requests / saved % / USD) |
+| 🎠 **Configurable carousel** | Composer strip under the chat input: choose **Rotating** (cycle every 4s) or **Static** (show only the stats you tick) — pick exactly which stats appear; refreshed every 5s |
+| 💵 **Four money cards** | You paid (`money.paid_usd`), Would have cost (`money.would_have_usd`), Saved today (`money.saved_today_usd`), Saved this week (prorated: current ISO-week token share × lifetime `money.saved_usd` — llmtrim reports no weekly USD) |
 | 🔗 **Lives off the real CLI** | The host runs `llmtrim status --json` (the same command as `llmtrim status`) via the `subprocess` service — no ledger-file parsing, always consistent with the CLI |
 | 🩺 **Daemon health at a glance** | The dashboard shows a green/amber badge (daemon healthy / stopped) plus the binary version |
 | 🌗 **Theme-aware** | All colors use `--dsw-alias-*` design tokens; follows light/dark automatically |
@@ -42,12 +43,14 @@ llmtrim interceptor (daemon :43117) ──writes──> ~/.local/share/llmtrim/t
 Host half (DSH process)           ▼
   └─ subprocess service: resolveExecutable('llmtrim') → spawn llmtrim status --json
   └─ reshape → { daemon, totals, money, cost, byModel }
-  └─ webServer route GET /llmtrim-stats/api → JSON snapshot
+  └─ settings namespace `llmtrim-stats` { mode, staticStats } (carousel config)
+  └─ webServer routes: GET /llmtrim-stats/api (snapshot incl. config)
+                       PUT /llmtrim-stats/config (persist carousel choice)
                                   │
 Client bundle (browser)           ▼
   └─ single 5s poller → fetch(/llmtrim-stats/api) → snapshot fan-out to two seats
-       ├─ settings.section (id llmtrim-stats)      → full dashboard
-       └─ conversation.composer.dock (id llmtrim-carousel) → rotating strip
+       ├─ settings.section (id llmtrim-stats)      → full dashboard + carousel config
+       └─ conversation.composer.dock (id llmtrim-carousel) → rotating or static strip
 ```
 
 - **Pure pull from the CLI**: no ledger parsing, no events, no file watching; `llmtrim` missing or `status --json` failing → `{ok:false,error}`, UI shows unavailable, polling self-recovers.
@@ -87,11 +90,18 @@ dsh plugin --profile web add git+https://github.com/Zenjibad/llmtrim-stats-plugi
 
 ## ⚙️ Configuration
 
-No config file, no persisted settings. Fixed constants in source:
+The carousel is configurable from the Settings page (persisted in the `llmtrim-stats` settings namespace, written via `PUT /llmtrim-stats/config`):
+
+| Setting | Values | Effect |
+| --- | --- | --- |
+| **Mode** | `rotating` (default) / `static` | Rotating cycles the selected stats every 4 s; Static pins the carousel to a single stat (or cycles just the ticked ones if you pick several) |
+| **Stats** | 9 checkboxes (all on by default) | Which stats appear in the carousel: Saved today, Saved total, You paid, Would have cost, Saved this week, Tokens trimmed, Requests, Input saved, Round-trip |
+
+Fixed constants in source:
 
 | Knob | Location | Default |
 | --- | --- | --- |
-| HTTP route | `src/index.ts` | `GET /llmtrim-stats/api` |
+| HTTP routes | `src/index.ts` | `GET /llmtrim-stats/api`, `PUT /llmtrim-stats/config` |
 | Executable resolution | `resolveLlmtrim` in `src/index.ts` | `subprocess.resolveExecutable('llmtrim')`, fallback `LLMTRIM_BIN`, then the npm win32-x64 path |
 | Poll interval | `POLL_MS` in `src/client/index.tsx` | 5 s |
 | Carousel cadence | `CAROUSEL_MS` in `src/client/index.tsx` | 4 s |
@@ -112,6 +122,12 @@ A: The daemon isn't running (`llmtrim start`), or the ledger is empty. Start the
 **Q: "Saved (proxy bills)" vs "Net saved (re-priced)" differ?**
 A: Both come straight from `llmtrim status --json` — `money.saved_usd` (per-turn frozen rates) vs `cost.net_saved_usd` (re-priced at current list rates). They're different views of the same traffic; llmtrim's own CLI shows the same distinction.
 
+**Q: How is "Saved this week" computed?**
+A: llmtrim reports money only for the lifetime (`money.saved_usd`) and today (`money.saved_today_usd`); its `by_period` rows carry tokens but no USD. The plugin therefore prorates: current ISO-week input tokens ÷ lifetime input tokens × lifetime saved. It tracks the same weekly numbers you see in `llmtrim status` and updates as the ledger grows.
+
+**Q: Can I make the carousel show only one stat, or stop it rotating?**
+A: Yes — Settings → llmtrim Stats → Carousel: set Mode to **Static** and tick exactly the stats you want. A single tick pins the carousel to that stat; several ticks cycle just those. Rotating mode cycles all ticked stats. The choice is persisted and survives restarts.
+
 **Q: How do I remove it?**
 A: `dsh plugin --profile web rm llmtrim-stats-plugin` (or delete the profile dependency + bundle entry) and restart DSH.
 
@@ -127,8 +143,8 @@ A: `dsh plugin --profile web rm llmtrim-stats-plugin` (or delete the profile dep
 ```
 llmtrim-stats-plugin/
 ├── src/
-│   ├── index.ts            # host half: resolve llmtrim, spawn status --json, reshape, /llmtrim-stats/api route
-│   └── client/index.tsx    # client bundle: 5s poller, settings dashboard, rotating dock carousel
+│   ├── index.ts            # host half: resolve llmtrim, spawn status --json, reshape, /llmtrim-stats/api + /llmtrim-stats/config routes, settings namespace
+│   └── client/index.tsx    # client bundle: 5s poller, settings dashboard, configurable dock carousel
 ├── cordis.patch.yml        # dsh.bundle patch (inserts the plugin row on boot)
 ├── tsdown.config.ts        # bundles host (node ESM) + client (CJS ModuleLoader)
 ├── package.json            # name, exports["./client"], dsh.client + dsh.bundle

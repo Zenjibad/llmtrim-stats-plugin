@@ -6,23 +6,53 @@
  * reshapes it into a clean snapshot, and serves it to the client bundle over an
  * HTTP route (`GET /llmtrim-stats/api`).
  *
+ * Also owns the `llmtrim-stats` settings namespace (carousel mode + which stats
+ * to show), exposed via `PUT /llmtrim-stats/config` and embedded in the
+ * snapshot so the client gets it in one poll.
+ *
  * Runtime note: packaged profile plugins are real Node modules, so Date works;
  * external commands go through the `subprocess` service (same pattern as
  * headroom-stats-plugin / deepseek-cost-usage-status-plugin).
  */
+import z from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name = 'llmtrim-stats-plugin'
 
-// Hard dependencies: webServer (serves the stats route), subprocess (runs
-// `llmtrim status --json`).
-export const inject = ['webServer', 'subprocess']
+// Hard dependencies: webServer (serves the routes), subprocess (runs
+// `llmtrim status --json`), settings (persists the carousel config).
+export const inject = ['webServer', 'subprocess', 'settings']
+
+export const NAMESPACE = 'llmtrim-stats'
+
+/** Carousel configuration persisted in the settings namespace. */
+export interface LlmtrimConfig {
+  mode: 'rotating' | 'static'
+  staticStats: string[]
+}
+
+/** All carousel slide keys (also the static-mode stat list). */
+export const STAT_KEYS = [
+  'savedToday',
+  'savedTotal',
+  'youPaid',
+  'wouldHave',
+  'savedWeek',
+  'tokensTrimmed',
+  'requests',
+  'inputSavedPct',
+  'roundTripPct',
+] as const
+
+/** Default carousel config: rotating, all stats. */
+const BASE_CONFIG: LlmtrimConfig = { mode: 'rotating', staticStats: [...STAT_KEYS] }
 
 /** A plain JSON snapshot returned to the client. */
 export interface LlmtrimSnapshot {
   ok: boolean
   error?: string
   command?: string
+  config?: LlmtrimConfig
   daemon?: {
     running: boolean
     health: string | null
@@ -47,6 +77,7 @@ export interface LlmtrimSnapshot {
     savedTodayUsd: number
     paidUsd: number
     wouldHaveUsd: number
+    savedWeekUsd: number
     turns: number
   }
   cost?: {
@@ -87,6 +118,12 @@ interface WebServerLike {
     path: string
     handler: (req: unknown, res: any) => void | Promise<void>
   }): () => void
+}
+
+interface SettingsLike {
+  register(ns: string, schema: unknown, opts: { base: LlmtrimConfig }): unknown
+  get(ns: string): LlmtrimConfig
+  update(ns: string, patch: Partial<LlmtrimConfig>): Promise<void>
 }
 
 function json(res: any, status: number, body: unknown): void {
@@ -137,9 +174,59 @@ async function fetchLlmtrimStatus(sub: SubprocessLike, exe: string): Promise<any
   return JSON.parse(out)
 }
 
+/** ISO week number (Monday-start) of a Date, matching llmtrim's `2026-W33` period keys. */
+function isoWeekOf(d: Date): string {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const day = (t.getUTCDay() + 6) % 7 // Mon=0
+  t.setUTCDate(t.getUTCDate() - day + 3)
+  const firstThursday = new Date(Date.UTC(t.getUTCFullYear(), 0, 4))
+  const firstDay = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3)
+  const week = 1 + Math.round((t.getTime() - firstThursday.getTime()) / (7 * 86400000))
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
+}
+
+/**
+ * llmtrim's `by_period` rows carry tokens but no money; `money` is always
+ * lifetime. "Saved this week" is therefore prorated: the current-ISO-week
+ * token share × lifetime saved. Mirrors llmtrim's own period math.
+ */
+function computeSavedWeekUsd(raw: any): number {
+  const periods = Array.isArray(raw?.by_period) ? raw.by_period : []
+  const totalInput = num0(raw?.input?.before)
+  if (totalInput <= 0 || periods.length === 0) return 0
+  const currentWeek = isoWeekOf(new Date())
+  const weekInput = periods
+    .filter((p: any) => String(p?.period ?? '').startsWith(currentWeek))
+    .reduce((sum: number, p: any) => sum + num0(p?.input_before), 0)
+  if (weekInput <= 0) return 0
+  return (weekInput / totalInput) * num0(raw?.money?.saved_usd)
+}
+
 export function apply(ctx: Context): void {
   const webServer = (ctx as unknown as { webServer: WebServerLike }).webServer
   const sub = ctx.get('subprocess') as SubprocessLike | undefined
+  const settings = ctx.get('settings') as SettingsLike | undefined
+
+  // Settings namespace: mode + which stats the carousel shows.
+  if (settings !== undefined) {
+    const schema = z.object({
+      mode: z.union([z.const('rotating'), z.const('static')]),
+      staticStats: z.array(z.string()),
+    })
+    settings.register(NAMESPACE, schema, { base: BASE_CONFIG })
+  }
+
+  const getConfig = (): LlmtrimConfig => {
+    const cfg = settings?.get(NAMESPACE)
+    if (cfg && cfg.mode === 'static') {
+      const valid = Array.isArray(cfg.staticStats)
+        ? cfg.staticStats.filter((s) => (STAT_KEYS as readonly string[]).includes(s))
+        : []
+      return { mode: 'static', staticStats: valid.length > 0 ? valid : [...STAT_KEYS] }
+    }
+    return { mode: 'rotating', staticStats: [...STAT_KEYS] }
+  }
 
   ctx.effect(() =>
     webServer.register({
@@ -155,6 +242,7 @@ export function apply(ctx: Context): void {
           const raw = await fetchLlmtrimStatus(sub, exe)
           const snapshot: Omit<LlmtrimSnapshot, 'ok' | 'error'> = {
             command: exe,
+            config: getConfig(),
             daemon: {
               running: !!raw?.daemon?.running,
               health: typeof raw?.daemon?.health === 'string' ? raw.daemon.health : null,
@@ -179,6 +267,7 @@ export function apply(ctx: Context): void {
               savedTodayUsd: num0(raw?.money?.saved_today_usd),
               paidUsd: num0(raw?.money?.paid_usd),
               wouldHaveUsd: num0(raw?.money?.would_have_usd),
+              savedWeekUsd: computeSavedWeekUsd(raw),
               turns: num0(raw?.money?.turns),
             },
             cost: {
@@ -195,11 +284,48 @@ export function apply(ctx: Context): void {
                   costSavedUsd: num0(m?.cost_saved_usd),
                 }))
               : [],
-            meta: { fetchedAt: new Date().toISOString(), schemaVersion: 1 },
+            meta: { fetchedAt: new Date().toISOString(), schemaVersion: 2 },
           }
           json(res, 200, { ok: true, ...snapshot })
         } catch (e) {
           json(res, 200, { ok: false, error: String((e as Error)?.message ?? e) })
+        }
+      },
+    }),
+  )
+
+  // Config update route: PUT { mode, staticStats } → persisted via settings.
+  ctx.effect(() =>
+    webServer.register({
+      kind: 'exact',
+      path: '/llmtrim-stats/config',
+      handler: async (req: any, res) => {
+        try {
+          if (settings === undefined) {
+            json(res, 503, { ok: false, error: 'settings service unavailable' })
+            return
+          }
+          const body = await new Promise<string>((resolve, reject) => {
+            let data = ''
+            req.on('data', (c: Buffer) => {
+              data += c.toString('utf8')
+              if (data.length > 65536) {
+                reject(new Error('config payload too large'))
+                req.destroy()
+              }
+            })
+            req.on('end', () => resolve(data))
+            req.on('error', reject)
+          })
+          const parsed = JSON.parse(body) as { mode?: string; staticStats?: unknown }
+          const mode = parsed.mode === 'static' ? 'static' : 'rotating'
+          const stats = Array.isArray(parsed.staticStats)
+            ? parsed.staticStats.filter((s): s is string => typeof s === 'string' && (STAT_KEYS as readonly string[]).includes(s))
+            : [...STAT_KEYS]
+          await settings.update(NAMESPACE, { mode, staticStats: mode === 'static' ? stats : [...STAT_KEYS] })
+          json(res, 200, { ok: true, config: getConfig() })
+        } catch (e) {
+          json(res, 400, { ok: false, error: String((e as Error)?.message ?? e) })
         }
       },
     }),

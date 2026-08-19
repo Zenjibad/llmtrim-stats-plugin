@@ -27,8 +27,9 @@
 
 | 特性 | 说明 |
 | --- | --- |
-| 📊 **设置页仪表盘** | 设置 → llmtrim Stats：KPI 卡片（代理账单节省、token 削减、请求数、按现价重估净节省）、守护进程健康徽章 + 版本号、按模型表格（模型 / 请求数 / 节省 % / USD） |
-| 🎠 **输入区轮播条** | 聊天输入框下方一条轮播，每 4 秒切换：`今日节省 → 累计节省 → token 削减 → 请求数 → 输入节省 → 往返节省`，每 5 秒刷新 |
+| 📊 **设置页仪表盘** | 设置 → llmtrim Stats：KPI 卡片（**已支付 / 未压缩应付 / 今日节省 / 本周节省** + token 削减、请求数、按现价重估净节省）、守护进程健康徽章 + 版本号、按模型表格（模型 / 请求数 / 节省 % / USD） |
+| 🎠 **可配置轮播条** | 聊天输入框下方统计条：选择 **轮播**（每 4 秒切换）或 **静态**（只显示勾选的统计）——自由挑选展示哪些统计，每 5 秒刷新 |
+| 💵 **四张金额卡片** | 已支付（`money.paid_usd`）、未压缩应付（`money.would_have_usd`）、今日节省（`money.saved_today_usd`）、本周节省（按当前 ISO 周 token 占比 × 累计 `money.saved_usd` 折算——llmtrim 不提供周度美元额） |
 | 🔗 **与官方 CLI 一致** | Host 通过 `subprocess` 服务运行 `llmtrim status --json`（与 `llmtrim status` 相同命令）——不解析账本文件，始终与 CLI 一致 |
 | 🩺 **守护进程健康一目了然** | 仪表盘显示绿/黄徽章（守护进程健康 / 已停止）与二进制版本号 |
 | 🌗 **主题自适应** | 全部颜色使用 `--dsw-alias-*` 设计令牌，亮/暗色自动跟随 |
@@ -42,12 +43,14 @@ llmtrim 拦截器（守护进程 :43117）──写入──> ~/.local/share/llm
 Host 半区（DSH 进程内）            ▼
   └─ subprocess 服务：resolveExecutable('llmtrim') → spawn llmtrim status --json
   └─ 重塑 → { daemon, totals, money, cost, byModel }
-  └─ webServer 路由 GET /llmtrim-stats/api → JSON 快照
+  └─ settings 命名空间 `llmtrim-stats` { mode, staticStats }（轮播配置）
+  └─ webServer 路由：GET /llmtrim-stats/api（快照含配置）
+                     PUT /llmtrim-stats/config（持久化轮播选择）
                                   │
 Client 半区（浏览器）              ▼
   └─ 单一 5s 轮询 fetch(/llmtrim-stats/api) → 快照分发到两个席位
-       ├─ settings.section (id llmtrim-stats)      → 完整仪表盘
-       └─ conversation.composer.dock (id llmtrim-carousel) → 轮播条
+       ├─ settings.section (id llmtrim-stats)      → 完整仪表盘 + 轮播配置
+       └─ conversation.composer.dock (id llmtrim-carousel) → 轮播或静态条
 ```
 
 - **纯拉取**：不解析账本、无事件、无文件监听；`llmtrim` 缺失或 `status --json` 失败 → `{ok:false,error}`，UI 显示不可用，轮询自动恢复。
@@ -87,11 +90,18 @@ dsh plugin --profile web add git+https://github.com/Zenjibad/llmtrim-stats-plugi
 
 ## ⚙️ 配置
 
-无配置文件、无持久化设置。固定常量见源码：
+轮播条可在设置页配置（持久化到 `llmtrim-stats` settings 命名空间，通过 `PUT /llmtrim-stats/config` 写入）：
+
+| 设置项 | 取值 | 效果 |
+| --- | --- | --- |
+| **模式** | `rotating`（默认）/ `static` | 轮播：每 4 秒循环切换所选统计；静态：固定显示单个统计（勾选多个则只在这些之间循环） |
+| **统计项** | 9 个复选框（默认全选） | 轮播条显示哪些统计：今日节省、累计节省、已支付、未压缩应付、本周节省、token 削减、请求数、输入节省、往返节省 |
+
+固定常量见源码：
 
 | 可调项 | 位置 | 默认值 |
 | --- | --- | --- |
-| HTTP 路由 | `src/index.ts` | `GET /llmtrim-stats/api` |
+| HTTP 路由 | `src/index.ts` | `GET /llmtrim-stats/api`、`PUT /llmtrim-stats/config` |
 | 可执行文件解析 | `src/index.ts` 中的 `resolveLlmtrim` | `subprocess.resolveExecutable('llmtrim')`，回退 `LLMTRIM_BIN`，再回退 npm win32-x64 路径 |
 | 轮询间隔 | `src/client/index.tsx` 中的 `POLL_MS` | 5 秒 |
 | 轮播节奏 | `src/client/index.tsx` 中的 `CAROUSEL_MS` | 4 秒 |
@@ -112,6 +122,12 @@ A: 守护进程未运行（`llmtrim start`），或账本为空。启动守护�
 **Q: 「代理账单节省」与「按现价重估净节省」为何不同？**
 A: 两者都直接来自 `llmtrim status --json`——`money.saved_usd`（按每次对话冻结费率）与 `cost.net_saved_usd`（按当前列表价重估）。它们是同一批流量的不同视角；llmtrim 官方 CLI 也展示同样的区别。
 
+**Q: 「本周节省」如何计算？**
+A: llmtrim 只按生命周期（`money.saved_usd`）与今日（`money.saved_today_usd`）报告金额；其 `by_period` 行只带 token 不带 USD。因此插件按比例折算：当前 ISO 周输入 token ÷ 累计输入 token × 累计节省。与你在 `llmtrim status` 中看到的周度数字一致，随账本增长而更新。
+
+**Q: 能不能让轮播条只显示一个统计、或停止轮播？**
+A: 可以——设置 → llmtrim Stats → Carousel：把模式设为 **Static** 并只勾选一个统计即可固定显示；勾选多个则只在这些之间循环。轮播模式会循环所有勾选项。选择会持久化并跨重启保留。
+
 **Q: 如何彻底移除？**
 A: `dsh plugin --profile web rm llmtrim-stats-plugin`（或删除 profile 依赖与 bundle 条目）后重启 DSH。
 
@@ -127,8 +143,8 @@ A: `dsh plugin --profile web rm llmtrim-stats-plugin`（或删除 profile 依赖
 ```
 llmtrim-stats-plugin/
 ├── src/
-│   ├── index.ts            # host 半区：解析 llmtrim、spawn status --json、重塑、/llmtrim-stats/api 路由
-│   └── client/index.tsx    # client 包：5s 轮询、设置页仪表盘、轮播统计条
+│   ├── index.ts            # host 半区：解析 llmtrim、spawn status --json、重塑、/llmtrim-stats/api 与 /llmtrim-stats/config 路由、settings 命名空间
+│   └── client/index.tsx    # client 包：5s 轮询、设置页仪表盘、可配置轮播统计条
 ├── cordis.patch.yml        # dsh.bundle patch（启动时插入插件行）
 ├── tsdown.config.ts        # 打包 host（node ESM）+ client（CJS ModuleLoader）
 ├── package.json            # name、exports["./client"]、dsh.client + dsh.bundle

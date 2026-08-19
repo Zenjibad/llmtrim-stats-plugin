@@ -8,22 +8,23 @@ For the complete combined document, see [llms-full.txt](llms-full.txt). For huma
 
 - [Repository](https://github.com/Zenjibad/llmtrim-stats-plugin): public GitHub repo, MIT license, `dsh-plugin` topic.
 - [Install](README.md#-quick-start): packaged profile plugin — `dsh plugin --profile web add <spec>` (local dir, `github:Zenjibad/llmtrim-stats-plugin`, or `git+https://github.com/Zenjibad/llmtrim-stats-plugin.git`), then restart DSH **and hard-refresh the browser tab**. `dsh.bundle` (`cordis.patch.yml`) mounts the host half; `dsh.client` + `exports["./client"]` register the browser half. Survives restarts, no cordis_define.
-- [Data source](README.md#️-how-it-works): host runs `llmtrim status --json` via the `subprocess` service (resolve `llmtrim` on PATH, fallback `LLMTRIM_BIN`, then npm win32-x64 path), reshapes into `{daemon, totals, money, cost, byModel}`, serves `GET /llmtrim-stats/api`. Read-only.
-- [UI seats](README.md#-features): `settings.section` id `llmtrim-stats` (KPI cards + daemon badge + per-model table) + `conversation.composer.dock` id `llmtrim-carousel` (rotating strip cycling Saved today / Saved total / Tokens trimmed / Requests / Input saved / Round-trip every 4s), fed by one shared 5s poller.
+- [Data source](README.md#️-how-it-works): host runs `llmtrim status --json` via the `subprocess` service (resolve `llmtrim` on PATH, fallback `LLMTRIM_BIN`, then npm win32-x64 path), reshapes into `{daemon, totals, money, cost, byModel}`, serves `GET /llmtrim-stats/api`. Read-only. Also owns the `llmtrim-stats` settings namespace (`{mode, staticStats}`) with `PUT /llmtrim-stats/config`.
+- [UI seats](README.md#-features): `settings.section` id `llmtrim-stats` (KPI cards incl. **You paid / Would have cost / Saved today / Saved this week** + daemon badge + per-model table + carousel config) + `conversation.composer.dock` id `llmtrim-carousel` (configurable strip: Rotating cycles selected stats every 4s, Static pins to the ticked stats), fed by one shared 5s poller.
+- [Money cards](README.md#️-configuration): You paid = `money.paid_usd`, Would have cost = `money.would_have_usd`, Saved today = `money.saved_today_usd`, Saved this week = prorated (current ISO-week token share × lifetime `money.saved_usd`, since llmtrim reports no weekly USD).
 - [Failure mode](README.md#-faq): `llmtrim` missing or `status --json` failing → `{ok:false,error}`; UI shows unavailable, polling self-recovers. Daemon stopped → zeros + "daemon stopped" badge.
 
 ## Documentation
 
 - [README.md (English)](README.md): features, architecture, quick start, config, FAQ, security notes.
 - [README.zh.md (中文)](README.zh.md): same content in Chinese.
-- [src/index.ts](src/index.ts): host half — resolve llmtrim, spawn `status --json` via subprocess, reshape, `/llmtrim-stats/api` route.
-- [src/client/index.tsx](src/client/index.tsx): client bundle — 5s poller, settings dashboard, rotating dock carousel.
+- [src/index.ts](src/index.ts): host half — resolve llmtrim, spawn `status --json` via subprocess, reshape, `/llmtrim-stats/api` + `/llmtrim-stats/config` routes, settings namespace.
+- [src/client/index.tsx](src/client/index.tsx): client bundle — 5s poller, settings dashboard, configurable dock carousel.
 - [AGENTS.md](AGENTS.md): repository guide for AI agents (layout, key behaviors, probed environment facts, testing).
 - [package.json](package.json): npm metadata with `dsh.bundle` + `dsh.client` manifests for `dsh plugin add`.
 
 ## Source layout
 
-- [src/index.ts](src/index.ts): the host half — `subprocess.resolveExecutable('llmtrim')` (PATHEXT resolution finds the exe), `spawn [exe, status, --json]`, reshape `money`/`cost`/`input`/`output`/`by_model`/`daemon` into the snapshot, `webServer` route.
-- [src/client/index.tsx](src/client/index.tsx): the client bundle — single 5s poller feeding both seats, `<style data-plugin>` with `--dsw-alias-*` theming, carousel via `setInterval` + index modulo.
+- [src/index.ts](src/index.ts): the host half — `subprocess.resolveExecutable('llmtrim')` (PATHEXT resolution finds the exe), `spawn [exe, status, --json]`, reshape `money`/`cost`/`input`/`output`/`by_model`/`daemon` into the snapshot, `webServer` routes (`GET` api + `PUT` config), settings namespace with schemastery schema.
+- [src/client/index.tsx](src/client/index.tsx): the client bundle — single 5s poller feeding both seats, `<style data-plugin>` with `--dsw-alias-*` theming, carousel via `setInterval` + index modulo, mode-aware filtering by `config.staticStats`.
 - [cordis.patch.yml](cordis.patch.yml): `dsh.bundle` patch inserting the plugin row.
 - [tsdown.config.ts](tsdown.config.ts): builds host (node ESM) + client (CJS ModuleLoader closure).
