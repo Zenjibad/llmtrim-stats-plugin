@@ -106,7 +106,12 @@ function num0(v: unknown): number {
 /** Resolve the llmtrim executable via the subprocess service. */
 async function resolveLlmtrim(sub: SubprocessLike): Promise<string> {
   try {
-    return await sub.resolveExecutable('llmtrim')
+    // Resolve the real executable, NOT the bare name: on Windows, bare
+    // `llmtrim` resolves to npm's `.cmd` shim (PATHEXT walks `.CMD` before
+    // reaching `%LOCALAPPDATA%\llmtrim\bin\llmtrim.exe`), and spawning a `.cmd`
+    // without a shell throws EINVAL. `llmtrim.exe` forces the exe extension.
+    const name = process.platform === 'win32' ? 'llmtrim.exe' : 'llmtrim'
+    return await sub.resolveExecutable(name)
   } catch {
     // Fall back to a known npm-managed location if PATH resolution failed.
     const candidates = [
