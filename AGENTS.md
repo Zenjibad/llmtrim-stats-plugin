@@ -41,7 +41,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 ## Environment facts (probed, do not re-probe)
 
 - Packaged host plugins are real Node modules: `process.env`, `Date` available (unlike the dynamic-plugin sandbox).
-- `subprocess.resolveExecutable('llmtrim')` resolves via PATH + PATHEXT (`.COM;.EXE;.BAT;.CMD`) — finds the `llmtrim.exe` on PATH (e.g. `%LOCALAPPDATA%\llmtrim\bin` or the npm win32-x64 bin).
+- **Resolve `llmtrim.exe`, never bare `llmtrim`, on Windows**: `subprocess.resolveExecutable('llmtrim')` returns npm's `.cmd` shim (PATHEXT walks `.CMD` before reaching `%LOCALAPPDATA%\llmtrim\bin\llmtrim.exe`), and spawning a `.cmd` without a shell throws `spawn EINVAL`. Use `resolveExecutable('llmtrim.exe')` on win32 (see `resolveLlmtrim`).
 - `llmtrim status --json` top-level keys: `daemon, reroute, last_request_ts, requests, input, output, cost, money, added_latency_ms, cache_read_tokens, approximate, by_model, by_period`; `money.source='breakdown_turns'`, `cost.source='compressions_live_prices'`.
 - `webServer.register` route shape: `{kind: 'exact'|'prefix', path, handler(req, res)}` with node:http semantics; duplicate (kind, path) throws. The handler receives the raw `IncomingMessage` (stream the body; do not assume it is pre-buffered).
 - The client bundle is plain browser JS (ModuleLoader CJS factory): `fetch`, `setInterval`, `document` are available; React comes from the module table (`external: react`).
