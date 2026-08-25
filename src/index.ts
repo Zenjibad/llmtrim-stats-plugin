@@ -131,7 +131,8 @@ function json(res: any, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-function num(v: unknown): number | null {
+/** Coerce an unknown value to a finite number, or null. */
+export function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
