@@ -164,3 +164,9 @@ llmtrim-stats-plugin/
 ## 📄 License
 
 [MIT](LICENSE)
+
+## Repo
+
+[![llmtrim-stats-plugin on GitHub](https://img.shields.io/badge/GitHub-Zenjibad%2Fllmtrim--stats--plugin-181717?logo=github)](https://github.com/Zenjibad/llmtrim-stats-plugin)
+
+Requires DSH ≥ 0.1 with the web profile.
